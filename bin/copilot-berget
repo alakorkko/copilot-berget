@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Launch GitHub Copilot CLI backed by Berget Code (flat-rate seat, EU infra)
+# instead of GitHub's Copilot API, using Copilot CLI's BYOK provider support.
+#
+# Prerequisite: run `npx berget auth login` once (seat must be assigned at
+# https://console.berget.ai/berget-code).
+#
+# GitHub auth: Copilot CLI picks up GitHub credentials from (in order)
+# COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN env vars and a logged-in `gh`
+# (it shells out to `gh auth token`). There is no flag to disable the gh
+# source, so run `gh auth logout` for a fully GitHub-free session — the
+# unset below only guards against tokens leaking in via the environment.
+#
+# Model is chosen at launch — the /model picker does not list BYOK models:
+#   copilot-berget                                       # default: GLM-5.3-Flash
+#   BERGET_MODEL="moonshotai/Kimi-K3" copilot-berget     # another model
+# or per invocation: copilot-berget -p "…" --model "zai-org/GLM-5.3-Flash"
+set -euo pipefail
+
+unset COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN
+
+export COPILOT_PROVIDER_BASE_URL="${BERGET_INFERENCE_URL:-https://api.berget.ai/v1}"
+export COPILOT_PROVIDER_TYPE="openai"
+export COPILOT_PROVIDER_API_KEY_COMMAND="$HOME/.berget/bin/berget-access-token"
+export COPILOT_PROVIDER_WIRE_MODEL="${BERGET_MODEL:-zai-org/GLM-5.3-Flash}"
+# Well-known base id for Copilot's capability/limit lookup; the wire model
+# itself is unknown to Copilot's model catalog.
+export COPILOT_PROVIDER_MODEL_ID="${BERGET_MODEL_ID:-kimi-k3}"
+export COPILOT_MODEL="${BERGET_MODEL_ID:-kimi-k3}"
+export COPILOT_ENABLE_ALT_PROVIDERS="true"
+unset BERGET_MODEL_ID
+
+exec copilot "$@"

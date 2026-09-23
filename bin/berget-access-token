@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Prints a fresh Berget OAuth access token for the flat-rate Berget Code seat.
+#
+# Reads ~/.berget/auth.json (created by `berget auth login` or
+# `npx berget code init`). If the access token is expired (or expires within
+# 60s), it is refreshed via https://api.berget.ai/v1/auth/refresh and the new
+# tokens are written back to auth.json.
+#
+# Intended for Copilot CLI BYOK:
+#   export COPILOT_PROVIDER_API_KEY_COMMAND="$HOME/.berget/bin/berget-access-token"
+set -euo pipefail
+
+AUTH_FILE="${BERGET_AUTH_FILE:-$HOME/.berget/auth.json}"
+API_URL="${BERGET_API_URL:-https://api.berget.ai}"
+
+python3 - "$AUTH_FILE" "$API_URL" <<'PY'
+import base64, json, sys, time, urllib.request
+
+auth_path, api_url = sys.argv[1], sys.argv[2].rstrip("/")
+
+try:
+    with open(auth_path) as f:
+        auth = json.load(f)
+except FileNotFoundError:
+    sys.exit(f"error: {auth_path} not found — run `npx berget auth login` first")
+
+def jwt_exp(token):
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload))["exp"]
+    except Exception:
+        return 0
+
+access = auth.get("access_token", "")
+if time.time() > jwt_exp(access) - 60:
+    refresh = auth.get("refresh_token")
+    if not refresh:
+        sys.exit("error: no refresh token — run `npx berget auth login` again")
+    req = urllib.request.Request(
+        f"{api_url}/v1/auth/refresh",
+        data=json.dumps({"refresh_token": refresh}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.load(resp)
+    except Exception as e:
+        sys.exit(f"error: token refresh failed ({e}) — run `npx berget auth login` again")
+    access = data["token"]
+    auth["access_token"] = access
+    if isinstance(data.get("refresh_token"), str):
+        auth["refresh_token"] = data["refresh_token"]
+    auth["expires_at"] = time.time() + data.get("expires_in", 3600)
+    with open(auth_path, "w") as f:
+        json.dump(auth, f, indent=2)
+        f.write("\n")
+    import os
+    os.chmod(auth_path, 0o600)
+
+print(access)
+PY
